@@ -1,4 +1,3 @@
-
 #=============================================================================================
 
 #Per vedere tutte le funzioni disponibili dentro la libreria ib_async quindi Stock, Forex, reqHistoricalData, etc
@@ -8,6 +7,8 @@
 #=============================================================================================
 
 from ib_async import *
+import datetime
+import pytz
 
 ib = IB()
 ib.connect("127.0.0.1", 7497, clientId=1)
@@ -100,19 +101,24 @@ else:
 ib.qualifyContracts(contract)
 tickerlive = ib.reqMktData(contract, '', False, False)
 
-import datetime
-for minute in range(5):
+while True:
     live_bid = []
     live_ask = []
     live_mid = []
-    for _ in range(60):  # 60 secondi = 1 minuto
+    start = datetime.datetime.now()
+    for i in range(60):
         ib.sleep(1)
         if tickerlive.bid is not None and tickerlive.ask is not None:
             live_bid.append(tickerlive.bid)
             live_ask.append(tickerlive.ask)
             live_mid.append((tickerlive.bid + tickerlive.ask) / 2)
+        now = datetime.datetime.now()
+        # Se manca meno di 1 secondo al prossimo minuto, esci subito
+        if (now - start).seconds >= 60 or now.second == 0:
+            break
     # Calcola O/H/L/C/V per BID, ASK, MID
     if live_bid and live_ask and live_mid:
+        # Arrotonda timestamp al minuto corrente
         now = datetime.datetime.now().replace(second=0, microsecond=0)
         bid_o = live_bid[0]
         bid_h = max(live_bid)
