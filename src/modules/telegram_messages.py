@@ -1,39 +1,21 @@
-#=============================================================================================
 
-#Per vedere tutte le funzioni disponibili dentro la libreria ib_async quindi Stock, Forex, reqHistoricalData, etc
-#import ib_async
-#print(dir(ib_async)) 
+import requests
 
-#=============================================================================================
+# Inserisci qui il tuo token e chat_id
+TELEGRAM_BOT_TOKEN = 'INSERISCI_IL_TUO_TOKEN'
+TELEGRAM_CHAT_ID = 'INSERISCI_LA_TUA_CHAT_ID'
 
-from ib_async import *
-import datetime
-import pytz
+def send_telegram_message(message, token=TELEGRAM_BOT_TOKEN, chat_id=TELEGRAM_CHAT_ID):
+	"""Invia un messaggio Telegram al bot specificato."""
+	url = f"https://api.telegram.org/bot{token}/sendMessage"
+	data = {
+		'chat_id': chat_id,
+		'text': message
+	}
+	try:
+		response = requests.post(url, data=data)
+		response.raise_for_status()
+	except Exception as e:
+		print(f"Errore invio messaggio Telegram: {e}")
 
-def onPnL(pnl):
-    print(f"P&L Update: Unrealized: ${pnl.unrealizedPnL:.2f}, Realized: ${pnl.realizedPnL:.2f}")
 
-ib = IB()
-ib.connect("127.0.0.1", 7497, clientId=1)
-
-
-# Subscribe to P&L updates (polling version)
-account = ib.managedAccounts()[0]
-pnl = ib.reqPnL(account)
-try:
-    while True:
-        ib.sleep(3600)
-        # Get current positions
-        positions = ib.positions()
-        print("Current Positions:")
-        for pos in positions:
-            print(f"{pos.contract.symbol}: {pos.position} @ {pos.avgCost}")
-        # Get open orders
-        orders = ib.openTrades()
-        print(f"Open Orders: {len(orders)}")
-        for trade in orders:
-            print(f"{trade.contract.symbol}: {trade.order.action} {trade.order.totalQuantity}")
-        # Get P&L updates
-        print(f"P&L Update: Unrealized: ${pnl.unrealizedPnL:.2f}, Realized: ${pnl.realizedPnL:.2f}")
-except KeyboardInterrupt:
-    ib.disconnect()
