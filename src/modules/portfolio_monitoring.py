@@ -18,6 +18,8 @@ if src_dir not in sys.path:
 import asyncio
 from ib_async import IB
 from telegram.ext import ApplicationBuilder, CommandHandler
+from trading.config import load_runtime_config
+from trading.ibkr import connect_ibkr_async
 from modules.telegram_messages import (
     TELEGRAM_BOT_TOKEN,
     send_async_portfolio_update,
@@ -52,9 +54,10 @@ async def monitor_loop(ib, telegram_app):
 # Funzione Principale Asincrona
 async def main():
     # 1. Inizializza e connette IBKR in modalità asincrona
+    config = load_runtime_config(global_path="config/global.toml")
     ib = IB()
 #    print("Connessione a IBKR in corso...")
-    await ib.connectAsync("127.0.0.1", 7497, clientId=3)
+    await connect_ibkr_async(ib, config.ibkr, client_id_offset=2)
     
     # 2. Configura l'applicazione Telegram (Task 2)
     # TELEGRAM_BOT_TOKEN arriva già popolato dal file .env grazie all'import iniziale
