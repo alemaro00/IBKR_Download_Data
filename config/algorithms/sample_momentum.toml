@@ -1,0 +1,5 @@
+[algorithm]
+name = "sample_momentum"
+lookback = 2
+threshold = 0.01
+

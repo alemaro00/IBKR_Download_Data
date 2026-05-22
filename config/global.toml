@@ -1,0 +1,20 @@
+[ibkr]
+host = "127.0.0.1"
+port = 7497
+client_id = 1
+
+[market]
+asset_type = "stock"
+exchange = "SMART"
+currency = "USD"
+symbols = ["AAPL"]
+
+[run]
+initial_cash = 10000
+require_reliability = true
+
+[reliability]
+min_trades = 1
+min_sharpe = 0.0
+max_drawdown = 0.20
+require_positive_return = true

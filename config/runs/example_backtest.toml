@@ -1,0 +1,22 @@
+[run]
+mode = "backtest"
+initial_cash = 10000
+require_reliability = true
+
+[market]
+symbols = ["AAPL"]
+asset_type = "stock"
+exchange = "SMART"
+currency = "USD"
+
+[algorithm]
+name = "sample_momentum"
+lookback = 2
+threshold = 0.01
+
+[reliability]
+min_trades = 1
+min_sharpe = -10.0
+max_drawdown = 0.20
+require_positive_return = true
+
