@@ -1,19 +1,23 @@
-#=============================================================================================
+#==============================================================================================
 
-#Per vedere tutte le funzioni disponibili dentro la libreria ib_async quindi Stock, Forex, reqHistoricalData, etc
-#import ib_async
-#print(dir(ib_async)) 
+# CODICE RUNNABILE SENZA MAIN.PY, PER MONITORARE I DATI LIVE DI FOREX O STOCK/FUTURES
 
-#=============================================================================================
+#==============================================================================================
 from ib_async import *
 import datetime
+import sys  # Aggiunto per leggere gli argomenti dal main.py
 
 ib = IB()
 # Uso clientId=2 per evitare conflitti con portfolio_monitoring
 ib.connect("127.0.0.1", 7497, clientId=2) 
 
-tipo = input("Vuoi seguire dati live Forex o Stock/Futures? [forex/stock]: ").strip().lower()
-ticker = input("Inserisci il ticker (es: EURUSD per forex, AAPL per stock): ").strip().upper()
+# --- Lettura Input ---
+if len(sys.argv) > 2:
+    tipo = sys.argv[1].strip().lower()
+    ticker = sys.argv[2].strip().upper()
+else:
+    tipo = input("Vuoi seguire dati live Forex o Stock/Futures? [forex/stock]: ").strip().lower()
+    ticker = input("Inserisci il ticker (es: EURUSD per forex, AAPL per stock): ").strip().upper()
 
 if tipo == "forex":
     contract = Forex(ticker)
@@ -22,8 +26,6 @@ else:
 
 ib.qualifyContracts(contract)
 tickerlive = ib.reqMktData(contract, '', False, False)
-
-print(f"\nInizio acquisizione dati LIVE per {ticker}...")
 
 try:
     while True:

@@ -1,22 +1,25 @@
-#=============================================================================================
+#==============================================================================================
 
-#Per vedere tutte le funzioni disponibili dentro la libreria ib_async quindi Stock, Forex, reqHistoricalData, etc
-#import ib_async
-#print(dir(ib_async)) 
+# CODICE RUNNABILE SENZA MAIN.PY, PER SCARICARE I DATI STORICI DI FOREX O STOCK/FUTURES
 
-#=============================================================================================
+#==============================================================================================
 
 from ib_async import *
 import datetime
 import pytz
+import sys  # Aggiunto per leggere gli argomenti dal main.py
 
 ib = IB()
 ib.connect("127.0.0.1", 7497, clientId=1)
 
-# --- Interazione utente ---
-tipo = input("Vuoi scaricare dati Forex o Stock/Futures? [forex/stock]: ").strip().lower()
-ticker = input("Inserisci il ticker (es: EURUSD per forex, AAPL per stock): ").strip().upper()
-
+# --- Lettura Input ---
+# Se passiamo gli argomenti dal main.py li usiamo, altrimenti chiediamo l'input (fallback)
+if len(sys.argv) > 2:
+    tipo = sys.argv[1].strip().lower()
+    ticker = sys.argv[2].strip().upper()
+else:
+    tipo = input("Vuoi scaricare dati Forex o Stock/Futures? [forex/stock]: ").strip().lower()
+    ticker = input("Inserisci il ticker (es: EURUSD per forex, AAPL per stock): ").strip().upper()
 
 if tipo == "forex":
     contract = Forex(ticker)
