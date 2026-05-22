@@ -1,2 +1,4 @@
 ib_async
 pytz
+python-telegram-bot
+python-dotenv

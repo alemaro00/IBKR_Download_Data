@@ -6,34 +6,86 @@
 
 #=============================================================================================
 
-from ib_async import *
-import datetime
-import pytz
+import asyncio
+from ib_async import IB
+from telegram.ext import ApplicationBuilder, CommandHandler
+from modules.telegram_messages import (
+    TELEGRAM_BOT_TOKEN,
+    send_async_portfolio_update,
+    help_command,
+    posizioni_command,
+    pnl_command,
+    tutto_command
+)
 
-def onPnL(pnl):
-    print(f"P&L Update: Unrealized: ${pnl.unrealizedPnL:.2f}, Realized: ${pnl.realizedPnL:.2f}")
+# Ciclo di monitoraggio in background (Task 1)
+async def monitor_loop(ib, telegram_app):
+    account = ib.managedAccounts()[0]
+    # Sottoscrizione al flusso P&L continuo di IBKR
+    pnl_subscription = ib.reqPnL(account)
+    
+    print("Avvio ciclo di monitoraggio automatico (Ogni 1 ora)...")
+    try:
+        while True:
+            # Aspetta un'ora cedendo il controllo ad altri task (es. i comandi Telegram)
+            await asyncio.sleep(3600) 
+            
+            positions = ib.positions()
+            orders = ib.openTrades()
+            
+            print(f"Esecuzione report automatico pianificato: {len(positions)} posizioni trovate.")
+            
+            # Inviamo l'aggiornamento automatico usando il bot interno all'applicazione telegram
+            await send_async_portfolio_update(telegram_app.bot, positions, orders, pnl_subscription)
+            
+    except asyncio.CancelledError:
+        print("Ciclo di monitoraggio interrotto.")
 
-ib = IB()
-ib.connect("127.0.0.1", 7497, clientId=1)
+# Funzione Principale Asincrona
+async def main():
+    # 1. Inizializza e connette IBKR in modalità asincrona
+    ib = IB()
+    print("Connessione a IBKR in corso...")
+    await ib.connectAsync("127.0.0.1", 7497, clientId=3)
+    
+    # 2. Configura l'applicazione Telegram (Task 2)
+    # TELEGRAM_BOT_TOKEN arriva già popolato dal file .env grazie all'import iniziale
+    telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    # Salviamo l'istanza 'ib' dentro i dati del bot, 
+    # così i comandi /posizioni o /pnl possono leggerla in qualsiasi momento
+    telegram_app.bot_data['ib_instance'] = ib
+    
+    # Registriamo i comandi che l'utente può digitare su Telegram
+    telegram_app.add_handler(CommandHandler("start", help_command))
+    telegram_app.add_handler(CommandHandler("help", help_command))
+    telegram_app.add_handler(CommandHandler("posizioni", posizioni_command))
+    telegram_app.add_handler(CommandHandler("pnl", pnl_command))
+    telegram_app.add_handler(CommandHandler("tutto", tutto_command))
+    
+    # 3. Avviamo Telegram in background senza bloccare il codice
+    await telegram_app.initialize()
+    await telegram_app.start()
+    await telegram_app.updater.start_polling()
+    print("Bot Telegram attivo e in ascolto dei comandi...")
+    
+    # 4. Creiamo il task per il ciclo di monitoraggio orario di IBKR
+    monitor_task = asyncio.create_task(monitor_loop(ib, telegram_app))
+    
+    # 5. Manteniamo l'applicazione attiva coordinando i flussi di IBKR e Telegram
+    try:
+        while True:
+            # Esegue l'ascolto degli eventi di rete interni di IBKR
+            await ib.sleepAsync(0.5)
+    except (KeyboardInterrupt, SystemExit):
+        print("Spegnimento in corso...")
+    finally:
+        # Chiusura pulita di tutti i servizi
+        monitor_task.cancel()
+        await telegram_app.updater.stop()
+        await telegram_app.stop()
+        ib.disconnect()
 
-
-# Subscribe to P&L updates (polling version)
-account = ib.managedAccounts()[0]
-pnl = ib.reqPnL(account)
-try:
-    while True:
-        ib.sleep(3600)
-        # Get current positions
-        positions = ib.positions()
-        print("Current Positions:")
-        for pos in positions:
-            print(f"{pos.contract.symbol}: {pos.position} @ {pos.avgCost}")
-        # Get open orders
-        orders = ib.openTrades()
-        print(f"Open Orders: {len(orders)}")
-        for trade in orders:
-            print(f"{trade.contract.symbol}: {trade.order.action} {trade.order.totalQuantity}")
-        # Get P&L updates
-        print(f"P&L Update: Unrealized: ${pnl.unrealizedPnL:.2f}, Realized: ${pnl.realizedPnL:.2f}")
-except KeyboardInterrupt:
-    ib.disconnect()
+if __name__ == "__main__":
+    # Avvia l'Event Loop nativo di Python
+    asyncio.run(main())
