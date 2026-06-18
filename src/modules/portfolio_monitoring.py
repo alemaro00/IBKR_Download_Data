@@ -1,11 +1,13 @@
 #==============================================================================================
-
-# CODICE RUNNABILE SENZA MAIN.PY, PER MONITORARE IL PORTAFOGLIO IN TEMPO REALE CON UN BOT TELEGRAM
-
+# CODICE PER MONITORARE IL PORTAFOGLIO IN TEMPO REALE CON UN BOT TELEGRAM
+# Esecuzione asincrona indipendente per ecosistema IBKR
 #==============================================================================================
 
 import sys
 import os
+import asyncio
+from ib_async import IB
+from telegram.ext import ApplicationBuilder, CommandHandler
 
 # ---- FIX PER IL RUN DIRETTO ----
 # Aggiunge la cartella 'src' ai percorsi di Python così riconosce il pacchetto 'modules'
@@ -15,9 +17,6 @@ if src_dir not in sys.path:
     sys.path.insert(0, src_dir)
 # --------------------------------
 
-import asyncio
-from ib_async import IB
-from telegram.ext import ApplicationBuilder, CommandHandler
 from modules.telegram_messages import (
     TELEGRAM_BOT_TOKEN,
     send_async_portfolio_update,
@@ -26,69 +25,75 @@ from modules.telegram_messages import (
     pnl_command,
     tutto_command
 )
-# Ciclo di monitoraggio in background (Task 1)
-async def monitor_loop(ib, telegram_app):
-    account = ib.managedAccounts()[0]
+
+# --- TASK 1: Ciclo di monitoraggio in background ---
+async def monitor_loop(ib, telegram_app, account):
     # Sottoscrizione al flusso P&L continuo di IBKR
     pnl_subscription = ib.reqPnL(account)
     
-#    print("Avvio ciclo di monitoraggio automatico (Ogni 1 ora)...")
     try:
         while True:
-            # Aspetta un'ora cedendo il controllo ad altri task (es. i comandi Telegram)
+            # Aspetta un'ora (3600 secondi) cedendo il controllo ad altri task
             await asyncio.sleep(3600) 
             
             positions = ib.positions()
             orders = ib.openTrades()
             
-#            print(f"Esecuzione report automatico pianificato: {len(positions)} posizioni trovate.")
-            
-            # Inviamo l'aggiornamento automatico usando il bot interno all'applicazione telegram
+            # Inviamo l'aggiornamento automatico usando il bot interno all'applicazione Telegram
             await send_async_portfolio_update(telegram_app.bot, positions, orders, pnl_subscription)
             
     except asyncio.CancelledError:
-        print("Ciclo di monitoraggio interrotto.")
+        print("Ciclo di monitoraggio automatico interrotto.")
 
-# Funzione Principale Asincrona
+
+# --- TASK PRINCIPALE: Orchestrazione IBKR e Telegram ---
 async def main():
-    # 1. Inizializza e connette IBKR in modalità asincrona
+    # 1. Inizializza e connette IBKR in modalità asincrona (uso esclusivo di clientId=3 per il bot)
     ib = IB()
-#    print("Connessione a IBKR in corso...")
-    await ib.connectAsync("127.0.0.1", 7497, clientId=3)
+    try:
+        await ib.connectAsync("127.0.0.1", 7497, clientId=3)
+    except Exception as e:
+        print(f"Errore critico: Impossibile connettere il bot a IBKR. Dettagli: {e}")
+        return
     
-    # 2. Configura l'applicazione Telegram (Task 2)
-    # TELEGRAM_BOT_TOKEN arriva già popolato dal file .env grazie all'import iniziale
+    # ATTESA DI SICUREZZA: Previene IndexError se IBKR ritarda l'invio dei dati del conto
+    while not ib.managedAccounts():
+        await asyncio.sleep(0.1)
+    
+    # Ora è sicuro estrarre l'account
+    account = ib.managedAccounts()[0]
+    
+    # 2. Configura l'applicazione Telegram
     telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     
-    # Salviamo l'istanza 'ib' dentro i dati del bot, 
-    # così i comandi /posizioni o /pnl possono leggerla in qualsiasi momento
+    # Salviamo l'istanza 'ib' dentro i dati del bot per renderla accessibile ai comandi On-Demand
     telegram_app.bot_data['ib_instance'] = ib
     
-    # Registriamo i comandi che l'utente può digitare su Telegram
+    # Registriamo i comandi
     telegram_app.add_handler(CommandHandler("start", help_command))
     telegram_app.add_handler(CommandHandler("help", help_command))
     telegram_app.add_handler(CommandHandler("posizioni", posizioni_command))
     telegram_app.add_handler(CommandHandler("pnl", pnl_command))
     telegram_app.add_handler(CommandHandler("tutto", tutto_command))
     
-    # 3. Avviamo Telegram in background senza bloccare il codice
+    # 3. Avviamo Telegram in background
     await telegram_app.initialize()
     await telegram_app.start()
     await telegram_app.updater.start_polling()
-#    print("Bot Telegram attivo e in ascolto dei comandi...")
     
     # 4. Creiamo il task per il ciclo di monitoraggio orario di IBKR
-    monitor_task = asyncio.create_task(monitor_loop(ib, telegram_app))
+    # Passiamo 'account' al loop in modo pulito
+    monitor_task = asyncio.create_task(monitor_loop(ib, telegram_app, account))
     
-    # 5. Manteniamo l'applicazione attiva coordinando i flussi di IBKR e Telegram
+    # 5. Manteniamo l'applicazione attiva coordinando i flussi asincroni
     try:
         while True:
             # Esegue l'ascolto degli eventi di rete interni di IBKR
             await asyncio.sleep(0.5)
     except (KeyboardInterrupt, SystemExit):
-        print("Spegnimento in corso...")
+        print("\nSpegnimento del bot Telegram e disconnessione IBKR in corso...")
     finally:
-        # Chiusura pulita di tutti i servizi
+        # Chiusura pulita di tutti i servizi per evitare ghost-process
         monitor_task.cancel()
         await telegram_app.updater.stop()
         await telegram_app.stop()
