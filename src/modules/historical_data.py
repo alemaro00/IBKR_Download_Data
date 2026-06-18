@@ -1,145 +1,137 @@
-from __future__ import annotations
+#==============================================================================================
+# CODICE PER SCARICARE I DATI STORICI DI FOREX O STOCK
+# Ottimizzato per la creazione di dataset, con supporto a Ticker testuali e Contract ID
+#==============================================================================================
 
-import argparse
 import sys
+import random
+import pandas as pd
+from ib_async import IB, Forex, Stock, Contract, util
 
-from trading.config import load_runtime_config
-from trading.ibkr import connect_ibkr
-
-
-class HistoricalDataUnavailable(RuntimeError):
-    """Raised when IBKR returns no historical bars for one or more requested streams."""
-
-
-DEFAULT_STREAMS_BY_TYPE = {
-    "forex": ["BID", "ASK", "MIDPOINT"],
-    "stock": ["TRADES"],
-}
-VALID_STREAMS = {"TRADES", "BID", "ASK", "MIDPOINT"}
-
-
-def default_streams(tipo: str) -> list[str]:
-    return list(DEFAULT_STREAMS_BY_TYPE["forex" if tipo == "forex" else "stock"])
-
-
-def build_contract(ib_module, tipo: str, ticker: str):
-    if tipo == "forex":
-        return ib_module.Forex(ticker)
-    return ib_module.Stock(ticker, "SMART", "USD")
-
-
-def fetch_historical_bars(ib, contract, streams: list[str]):
-    common = {
-        "endDateTime": "",
-        "durationStr": "1 D",
-        "barSizeSetting": "1 min",
-        "useRTH": True,
-    }
-    return {
-        stream: ib.reqHistoricalData(contract, whatToShow=stream, **common)
-        for stream in streams
-    }
-
-
-def print_historical_bars(tipo: str, bars_by_type: dict[str, list], required_streams: list[str] | None = None) -> None:
-    required_streams = required_streams or list(bars_by_type)
-    missing_required = [name for name in required_streams if not bars_by_type.get(name)]
-    if missing_required:
-        raise HistoricalDataUnavailable(
-            "IBKR returned no historical bars for "
-            + ", ".join(missing_required)
-            + ". Check market-data permissions, contract routing, and TWS error messages."
-        )
-
-    if tipo == "forex" and {"BID", "ASK", "MIDPOINT"}.issubset(bars_by_type):
-        print("Ultimi 10 BID, ASK e MIDPOINT:")
-        for bar_bid, bar_ask, bar_mid in zip(
-            bars_by_type["BID"][-10:],
-            bars_by_type["ASK"][-10:],
-            bars_by_type["MIDPOINT"][-10:],
-        ):
-            print(
-                f"{bar_bid.date}  "
-                f"BID: O={bar_bid.open:.5f} H={bar_bid.high:.5f} L={bar_bid.low:.5f} C={bar_bid.close:.5f} V={int(bar_bid.volume)} | "
-                f"ASK: O={bar_ask.open:.5f} H={bar_ask.high:.5f} L={bar_ask.low:.5f} C={bar_ask.close:.5f} V={int(bar_ask.volume)} | "
-                f"MID: O={bar_mid.open:.5f} H={bar_mid.high:.5f} L={bar_mid.low:.5f} C={bar_mid.close:.5f} V={int(bar_mid.volume)}"
-            )
-        return
-
-    if set(bars_by_type) == {"TRADES"}:
-        print("Ultimi 10 TRADES:")
-        for bar_tr in bars_by_type["TRADES"][-10:]:
-            print(
-                f"{bar_tr.date}  "
-                f"TRADES: O={bar_tr.open:.5f} H={bar_tr.high:.5f} L={bar_tr.low:.5f} C={bar_tr.close:.5f} V={int(bar_tr.volume)}"
-            )
-        return
-
-    print("Ultimi 10 TRADES, BID, ASK, MIDPOINT:")
-    for bar_tr, bar_bid, bar_ask, bar_mid in zip(
-        bars_by_type["TRADES"][-10:],
-        bars_by_type["BID"][-10:],
-        bars_by_type["ASK"][-10:],
-        bars_by_type["MIDPOINT"][-10:],
-    ):
-        print(
-            f"{bar_tr.date}  "
-            f"TRADES: O={bar_tr.open:.5f} H={bar_tr.high:.5f} L={bar_tr.low:.5f} C={bar_tr.close:.5f} V={int(bar_tr.volume)} | "
-            f"BID: O={bar_bid.open:.5f} H={bar_bid.high:.5f} L={bar_bid.low:.5f} C={bar_bid.close:.5f} V={int(bar_bid.volume)} | "
-            f"ASK: O={bar_ask.open:.5f} H={bar_ask.high:.5f} L={bar_ask.low:.5f} C={bar_ask.close:.5f} V={int(bar_ask.volume)} | "
-            f"MID: O={bar_mid.open:.5f} H={bar_mid.high:.5f} L={bar_mid.low:.5f} C={bar_mid.close:.5f} V={int(bar_mid.volume)}"
-        )
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Download historical bars from IBKR.")
-    parser.add_argument("asset_type", nargs="?", choices=["forex", "stock"])
-    parser.add_argument("ticker", nargs="?")
-    parser.add_argument(
-        "--streams",
-        nargs="+",
-        choices=sorted(VALID_STREAMS),
-        help="IBKR whatToShow streams. Defaults: forex=BID ASK MIDPOINT, stock=TRADES.",
-    )
-    parser.add_argument("--client-id", type=int, help="Override the configured IBKR client id for this run.")
-    return parser
-
-
-def parse_args(argv: list[str]) -> argparse.Namespace:
-    args = build_parser().parse_args(argv[1:])
-    if args.asset_type and args.ticker:
-        args.asset_type = args.asset_type.strip().lower()
-        args.ticker = args.ticker.strip().upper()
-        return args
-
-    args.asset_type = input("Vuoi scaricare dati Forex o Stock/Futures? [forex/stock]: ").strip().lower()
-    args.ticker = input("Inserisci il ticker (es: EURUSD per forex, AAPL per stock): ").strip().upper()
-    return args
-
-
-def main(argv: list[str] | None = None) -> int:
-    from ib_async import IB
-    import ib_async
-
-    args = argv if argv is not None else sys.argv
-    parsed = parse_args(args)
-    config = load_runtime_config(global_path="config/global.toml")
-    streams = parsed.streams or default_streams(parsed.asset_type)
-
+def get_historical_data(tipo: str, ticker: str):
     ib = IB()
-    client_id_offset = (parsed.client_id - config.ibkr.client_id) if parsed.client_id is not None else 0
-    connect_ibkr(ib, config.ibkr, client_id_offset=client_id_offset)
+    
+    # 1. RISOLUZIONE CONFLITTI: Generiamo un clientId casuale. 
+    client_id = random.randint(100, 9999)
+    
     try:
-        contract = build_contract(ib_async, parsed.asset_type, parsed.ticker)
-        bars = fetch_historical_bars(ib, contract, streams)
-        print_historical_bars(parsed.asset_type, bars, streams)
-    except HistoricalDataUnavailable as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
+        ib.connect("127.0.0.1", 7497, clientId=client_id)
+    except Exception as e:
+        print(f"Errore di connessione a IBKR: {e}")
+        return None
+
+    # 2. DEFINIZIONE DEL CONTRATTO (Intelligente: Ticker o Contract ID)
+    if ticker.isdigit():
+        print(f"\nRilevato Contract ID: {ticker}. Risoluzione dello strumento in corso...")
+        contract = Contract(conId=int(ticker))
+    else:
+        if tipo == "forex":
+            contract = Forex(ticker)
+        else:
+            contract = Stock(ticker, "SMART", "USD")
+
+    # 3. VALIDAZIONE DEL CONTRATTO
+    try:
+        # qualifyContracts cerca il ticker sui server IBKR e popola tutti i dettagli
+        ib.qualifyContracts(contract)
+        
+        # Se non trova nulla, il conId rimane a 0
+        if getattr(contract, 'conId', 0) == 0:
+            print(f"\n❌ Errore: Nessuno strumento trovato per l'input '{ticker}'.")
+            return None
+            
+        # Conferma visiva se l'utente ha usato un ID numerico
+        if ticker.isdigit():
+            print(f"✅ Strumento identificato: {contract.symbol} ({contract.secType}) su {contract.primaryExchange}")
+            
+    except Exception as e:
+        print(f"\n❌ Errore durante la validazione del contratto: {e}")
+        return None
+
+    print(f"\nScaricamento dati storici per {contract.symbol}...")
+
+    # Impostazioni comuni per il download
+    kwargs = {
+        "endDateTime": "",
+        "durationStr": "1 M",          # Storico di 1 mese
+        "barSizeSetting": "1 hour",    # Candele da 1 ora
+        "useRTH": False                # False = include Pre-Market e After-Market
+    }
+    
+
+    try:
+        if tipo == "forex" or contract.secType == "CASH":
+            # Il Forex non ha "TRADES", quindi scarichiamo solo BID, ASK, MIDPOINT
+            bars_bid = ib.reqHistoricalData(contract, whatToShow="BID", **kwargs)
+            bars_ask = ib.reqHistoricalData(contract, whatToShow="ASK", **kwargs)
+            bars_mid = ib.reqHistoricalData(contract, whatToShow="MIDPOINT", **kwargs)
+            
+            if not (bars_bid and bars_ask and bars_mid):
+                print("Dati insufficienti restituiti da IBKR.")
+                return None
+
+            # CREAZIONE DATASET SICURO CON PANDAS
+            df_bid = util.df(bars_bid)[['date', 'open', 'high', 'low', 'close', 'volume']].add_suffix('_BID')
+            df_ask = util.df(bars_ask)[['date', 'open', 'high', 'low', 'close', 'volume']].add_suffix('_ASK')
+            df_mid = util.df(bars_mid)[['date', 'open', 'high', 'low', 'close', 'volume']].add_suffix('_MID')
+
+            df = df_bid.rename(columns={'date_BID': 'date'}) \
+                .merge(df_ask.rename(columns={'date_ASK': 'date'}), on='date', how='outer') \
+                .merge(df_mid.rename(columns={'date_MID': 'date'}), on='date', how='outer') \
+                .sort_values('date')
+
+        else:
+            # Per Stock scarichiamo anche i TRADES (Scambi effettivi)
+            bars_trades = ib.reqHistoricalData(contract, whatToShow="TRADES", **kwargs)
+            bars_bid = ib.reqHistoricalData(contract, whatToShow="BID", **kwargs)
+            bars_ask = ib.reqHistoricalData(contract, whatToShow="ASK", **kwargs)
+            bars_mid = ib.reqHistoricalData(contract, whatToShow="MIDPOINT", **kwargs)
+
+            if not (bars_trades and bars_bid and bars_ask and bars_mid):
+                print("Dati insufficienti restituiti da IBKR.")
+                return None
+
+            df_tr = util.df(bars_trades)[['date', 'open', 'high', 'low', 'close', 'volume']].add_suffix('_TR')
+            df_bid = util.df(bars_bid)[['date', 'open', 'high', 'low', 'close', 'volume']].add_suffix('_BID')
+            df_ask = util.df(bars_ask)[['date', 'open', 'high', 'low', 'close', 'volume']].add_suffix('_ASK')
+            df_mid = util.df(bars_mid)[['date', 'open', 'high', 'low', 'close', 'volume']].add_suffix('_MID')
+
+            df = df_tr.rename(columns={'date_TR': 'date'}) \
+                .merge(df_bid.rename(columns={'date_BID': 'date'}), on='date', how='outer') \
+                .merge(df_ask.rename(columns={'date_ASK': 'date'}), on='date', how='outer') \
+                .merge(df_mid.rename(columns={'date_MID': 'date'}), on='date', how='outer') \
+                .sort_values('date')
+
+        print(f"\nEstrazione completata. {len(df)} righe elaborate.")
+        print("\nStampa di TUTTO il dataset:")
+        
+        # Usa option_context per rimuovere temporaneamente i limiti di stampa di Pandas
+        with pd.option_context('display.max_rows', None, 'display.max_columns', None):
+            print(df.tail().to_string(index=False))
+
+        # ESPORTAZIONE PER DATASET (De-commenta le righe sotto per salvare in CSV)
+        file_name = f"{contract.symbol}_{tipo}_historical.csv"
+        df.to_csv(file_name, index=False)
+        print(f"\nDati salvati con successo in: {file_name}")
+
+        return df
+
+    except Exception as e:
+        print(f"Si è verificato un errore durante l'estrazione: {e}")
+        return None
+
     finally:
         ib.disconnect()
-    return 0
 
-
+# ==============================================================================================
+# ESECUZIONE ISOLATA
+# ==============================================================================================
 if __name__ == "__main__":
-    raise SystemExit(main())
+    if len(sys.argv) > 2:
+        arg_tipo = sys.argv[1].strip().lower()
+        arg_ticker = sys.argv[2].strip().upper()
+    else:
+        arg_tipo = input("Vuoi scaricare dati Forex o Stock? [forex/stock]: ").strip().lower()
+        arg_ticker = input("Inserisci il ticker testuale (es: AAPL) o il Contract ID numerico: ").strip().upper()
+    
+    get_historical_data(arg_tipo, arg_ticker)

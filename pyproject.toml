@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "Download dati da IBKR"
 requires-python = ">=3.13,<3.15"
 dependencies = [
-    "ib_async==2.1.0",
+    "ib-async==2.1.0",
+    "pandas>=3.0.3",
     "python-dotenv>=1.2.2",
     "python-telegram-bot>=22.7",
     "pytz==2026.2",
